@@ -1,0 +1,15 @@
+name: nerf_torch
+channels:
+  - defaults
+  - conda-forge  # 关键：补充conda源，否则部分包找不到
+  - pytorch
+dependencies:
+  - python=3.8
+  - pytorch=1.11.0
+  - torchvision>=0.9.1
+  - matplotlib
+  - tqdm
+  - imageio>=2.20.0        # conda可直接安装，版本匹配NeRF需求
+  - imageio-ffmpeg>=0.4.7  # conda-forge源提供，需指定频道
+  - configargparse>=1.5.3  # conda可安装，替代pip版本
+  - tensorboard>=2.0       # conda官方源支持，适配PyTorch 1.11
