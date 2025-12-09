@@ -72,9 +72,12 @@ def get_embedder(multires, i=0):
     return embed, embedder_obj.out_dim
 
 #核心MLP
-class NeRF(nn.Module):             #默认值，实际上我们输入63维
+import jittor as jt
+import numpy as np
+
+class NeRF(jt.Module):  # 替换为 jt.Module（关键！）
     def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=False):
-        super(NeRF, self).__init__()#先继承
+        super(NeRF, self).__init__()
         self.D = D
         self.W = W
         self.input_ch = input_ch
@@ -82,32 +85,36 @@ class NeRF(nn.Module):             #默认值，实际上我们输入63维
         self.skips = skips
         self.use_viewdirs = use_viewdirs
 
-        self.pts_linears = nn.ModuleList(
-            [nn.Linear(input_ch, W)] + [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + input_ch, W)for i in range(D-1)]
+        # 替换为 jittor 的线性层（jt.nn.Linear）
+        self.pts_linears = jt.nn.ModuleList(
+            [jt.nn.Linear(input_ch, W)] + 
+            [jt.nn.Linear(W, W) if i not in self.skips else jt.nn.Linear(W + input_ch, W) 
+             for i in range(D-1)]
         )
 
-        self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
+        self.views_linears = jt.nn.ModuleList([jt.nn.Linear(input_ch_views + W, W//2)])
 
         if use_viewdirs:
-            self.feature_linear = nn.Linear(W, W)
-            self.alpha_linear = nn.Linear(W, 1)
-            self.rgb_linear = nn.Linear(W//2, 3)
+            self.feature_linear = jt.nn.Linear(W, W)
+            self.alpha_linear = jt.nn.Linear(W, 1)
+            self.rgb_linear = jt.nn.Linear(W//2, 3)
         else:
-            self.output_linear = nn.Linear(W, output_ch)
+            self.output_linear = jt.nn.Linear(W, output_ch)
 
-    #前向传输
-    def forward(self, x):
-        #拆分
+    # 替换 forward 为 execute（Jittor 要求的前向传播方法）
+    def execute(self, x):
+        # 拆分输入（jt.split 保持不变）
         input_pts, input_views = jt.split(x, [self.input_ch, self.input_ch_views], dim=-1)
         h = input_pts
-        #遍历我们的模型
-        for i,l in enumerate(self.pts_linears):
+        
+        # 遍历 pts_linears 网络层
+        for i, l in enumerate(self.pts_linears):
             h = self.pts_linears[i](h)
-            h = nn.ReLU(h)
+            h = jt.nn.relu(h)  # 替换为 jittor 的 relu
             if i in self.skips:
-                h = jt.cat([input_pts,h], -1)
+                h = jt.cat([input_pts, h], -1)
 
-        #照例判断是否使用视角
+        # 视角分支处理
         if self.use_viewdirs:
             alpha = self.alpha_linear(h)
             feature = self.feature_linear(h)
@@ -115,7 +122,7 @@ class NeRF(nn.Module):             #默认值，实际上我们输入63维
         
             for i, l in enumerate(self.views_linears):
                 h = self.views_linears[i](h)
-                h = nn.relu(h)
+                h = jt.nn.relu(h)  # 替换为 jittor 的 relu
 
             rgb = self.rgb_linear(h)
             outputs = jt.cat([rgb, alpha], -1)
@@ -124,36 +131,36 @@ class NeRF(nn.Module):             #默认值，实际上我们输入63维
         
         return outputs
 
-    #加载权重文件中的参数
+    # 修正权重加载逻辑（Jittor 张量无 .data 属性）
     def load_weights_from_keras(self, weights):
         assert self.use_viewdirs, "Not implemented if use_viewdirs=False"
         
         # Load pts_linears
         for i in range(self.D):
             idx_pts_linears = 2 * i
+            # Jittor 直接赋值权重，无需 .data
             self.pts_linears[i].weight = jt.array(np.transpose(weights[idx_pts_linears]))
             self.pts_linears[i].bias = jt.array(np.transpose(weights[idx_pts_linears+1]))
 
         # Load feature_linear
         idx_feature_linear = 2 * self.D
-        self.feature_linear.weight.data = jt.array(np.transpose(weights[idx_feature_linear]))
-        self.feature_linear.bias.data = jt.array(np.transpose(weights[idx_feature_linear+1]))
+        self.feature_linear.weight = jt.array(np.transpose(weights[idx_feature_linear]))
+        self.feature_linear.bias = jt.array(np.transpose(weights[idx_feature_linear+1]))
 
         # Load views_linears
         idx_views_linears = 2 * self.D + 2
-        self.views_linears[0].weight.data = jt.array(np.transpose(weights[idx_views_linears]))
-        self.views_linears[0].bias.data = jt.array(np.transpose(weights[idx_views_linears+1]))
+        self.views_linears[0].weight = jt.array(np.transpose(weights[idx_views_linears]))
+        self.views_linears[0].bias = jt.array(np.transpose(weights[idx_views_linears+1]))
 
         # Load rgb_linear
         idx_rbg_linear = 2 * self.D + 4
-        self.rgb_linear.weight.data = jt.array(np.transpose(weights[idx_rbg_linear]))
-        self.rgb_linear.bias.data = jt.array(np.transpose(weights[idx_rbg_linear+1]))
+        self.rgb_linear.weight = jt.array(np.transpose(weights[idx_rbg_linear]))
+        self.rgb_linear.bias = jt.array(np.transpose(weights[idx_rbg_linear+1]))
 
         # Load alpha_linear
         idx_alpha_linear = 2 * self.D + 6
-        self.alpha_linear.weight.data = jt.array(np.transpose(weights[idx_alpha_linear]))
-        self.alpha_linear.bias.data = jt.array(np.transpose(weights[idx_alpha_linear+1]))
-
+        self.alpha_linear.weight = jt.array(np.transpose(weights[idx_alpha_linear]))
+        self.alpha_linear.bias = jt.array(np.transpose(weights[idx_alpha_linear+1]))
 
 #光线处理
 def get_rays(H, W, K, c2w):
@@ -227,8 +234,8 @@ def sample_pdf(bins, weights, N_samples, det=False, pytest=False):
     #
     u = u.contiguous()
     inds = jt.searchsorted(cdf, u, right=True)
-    below = jt.max(jt.zeros_like(inds-1), inds-1)
-    above = jt.min((cdf.shape[-1]-1) * jt.ones_like(inds), inds)
+    below = jt.maximum(jt.zeros_like(inds-1), inds-1)
+    above = jt.minimum((jt.ones_like(inds-1) * (bins.shape[-1]-1)), inds)
     inds_g = jt.stack([below, above], -1)  # (batch, N_samples, 2)
 
     matched_shape = [inds_g.shape[0], inds_g.shape[1], cdf.shape[-1]]
